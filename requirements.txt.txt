@@ -1,7 +1,0 @@
-flask==3.0.0
-pyserial==3.5
-pyttsx3==2.90
-requests==2.31.0
-onnxruntime-genai
-qai-hub
-qai-hub-models

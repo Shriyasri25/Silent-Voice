@@ -10,11 +10,11 @@ Built for the Snapdragon Multiverse Hackathon 2026 — Qualcomm Noida Campus.
 
 |        Name         |             Email               |
 |---------------------|---------------------------------|
-| [Shriya Srivastava] | [shriyasrivastava025@gmail.com] |
-|    [Pranav Tyagi]   |    [tyagipranav10@gmail.com]    |
-|    [Aniket Prasad]  |    [aniketprasadn@gmail.com]    |
-|    [Ansh Varshney]  |  [varshneyansh9267@gmail.com]   |
-|   [Shubham Chauhan] |  [shubham.23b0231028@abes.ac.in]|
+| Shriya Srivastava   | shriyasrivastava025@gmail.com   |
+|    Pranav Tyagi     |    tyagipranav10@gmail.com      |
+|    Aniket Prasad    |    aniketprasadn@gmail.com      |
+|    Ansh Varshney    |  varshneyansh9267@gmail.com     |
+|   Shubham Chauhan   |  shubham.23b0231028@abes.ac.in  |
 
 ## What it does
 

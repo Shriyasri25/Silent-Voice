@@ -1,0 +1,17 @@
+{
+  "OPEN_NEUTRAL": "I need water",
+  "OPEN_HAPPY": "Yes, thank you",
+  "OPEN_SAD": "I am not feeling well",
+  "FIST_NEUTRAL": "I need help",
+  "FIST_SAD": "I am in pain",
+  "FIST_HAPPY": "I am feeling better",
+  "PINCH_NEUTRAL": "Please wait",
+  "PINCH_SAD": "I need medicine",
+  "PINCH_HAPPY": "I am okay",
+  "POINT_NEUTRAL": "Look at that",
+  "POINT_SAD": "It hurts here",
+  "PEACE_NEUTRAL": "Goodbye",
+  "PEACE_HAPPY": "Thank you so much",
+  "THUMB_NEUTRAL": "Yes",
+  "THUMB_SAD": "No"
+}

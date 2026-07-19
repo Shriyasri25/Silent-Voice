@@ -1,0 +1,32 @@
+# Silent Voice — AI PC dependencies
+# Install with: pip install -r requirements.txt
+
+# ---- Core pipeline ----
+pyserial==3.5
+flask==3.1.1
+requests==2.32.3
+
+# ---- Offline TTS ----
+pyttsx3==2.98
+
+# ---- Speech engine config ----
+# Reads .env for SPEECH_PROVIDER, SARVAM_API_KEY, etc.
+python-dotenv==1.1.1
+
+# ---- Sarvam AI audio playback ----
+# Primary playback chain (in order of preference):
+#   1. pyaudio  — cross-platform, plays WAV from memory buffer (no temp file).
+#                 On Windows, install the pre-built wheel if pip fails:
+#                   pip install pipwin && pipwin install pyaudio
+#                 On Linux: sudo apt-get install portaudio19-dev, then pip install pyaudio
+#   2. winsound — Windows built-in, used automatically if pyaudio is unavailable.
+#   3. aplay    — Linux/macOS system utility, used if winsound is unavailable.
+# The speech engine tries each strategy in order and falls back gracefully.
+pyaudio==0.2.14
+
+# playsound is listed here per project spec as a documented optional dependency.
+# It is NOT currently used in the playback chain — the pyaudio/winsound/aplay
+# pipeline is stable. Install if you want to experiment with a simpler
+# cross-platform playback alternative in future.
+# Note: playsound 1.3.0 requires PyObjC on macOS; use 1.2.2 for broader compat.
+playsound==1.2.2

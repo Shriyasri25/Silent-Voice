@@ -68,7 +68,7 @@ own.
               ▼
    ┌────────────────────┐
    │   4 · CAREGIVER     │   Arduino light goes 🟢 green for calm,
-   │   LED (urgency)     │   🔴 red for urgent — readable across the room
+   │   LED · optional    │   🔴 red for urgent — readable across the room
    └────────────────────┘
  
    ═══════════════════════════════════════════════════════════════
@@ -79,7 +79,7 @@ own.
               ▼
    ┌────────────────────┐
    │   Cloud AI 100      │   Learns your vocabulary over time and reranks
-   │   (optional)        │   phrases. Unplug it and nothing breaks.
+   │                     │   phrases. Unplug it and nothing breaks.
    └────────────────────┘
 ```
  

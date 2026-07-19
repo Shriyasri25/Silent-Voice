@@ -64,6 +64,8 @@ import numpy as np
 _MOBILE_DIR = pathlib.Path(__file__).resolve().parent   # mobile/
 _AI_PC_DIR  = _MOBILE_DIR.parent / "ai-pc"             # ai-pc/
 
+if str(_MOBILE_DIR) not in sys.path:
+    sys.path.insert(0, str(_MOBILE_DIR))
 if str(_AI_PC_DIR) not in sys.path:
     sys.path.insert(0, str(_AI_PC_DIR))
 
@@ -301,24 +303,33 @@ def _build_display_frame(
     last_phrase:    str,
 ) -> np.ndarray:
     """
-    Merge gesture and face annotations onto a single display frame.
+    Merge gesture and face+emotion annotations onto a single display frame.
 
     The gesture module flips the frame horizontally (mirror mode).
     Face bboxes come from the unflipped frame, so we mirror their x coords
     to align with the flipped display.
+
+    For each detected face we draw:
+      • green bounding box
+      • green confidence label  ("Face: 0.97")
+      • amber emotion label     ("happiness")  from FER+ inference
     """
     display = gesture_result.annotated_frame.copy()
     h, w = display.shape[:2]
 
-    # Re-draw face boxes with mirrored x coordinates
-    for bbox in face_result.bboxes:
+    for i, bbox in enumerate(face_result.bboxes):
+        # Mirror x so the box aligns with the horizontally-flipped gesture frame
         mx = w - (bbox.x + bbox.w)
+
+        # Bounding box
         cv2.rectangle(
             display,
             (mx, bbox.y),
             (mx + bbox.w, bbox.y + bbox.h),
             (0, 255, 0), 2,
         )
+
+        # Confidence label
         label_y = max(bbox.y - 8, 15)
         cv2.putText(
             display, f"Face: {bbox.confidence:.2f}",
@@ -326,10 +337,21 @@ def _build_display_frame(
             cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2, cv2.LINE_AA,
         )
 
+        # Emotion label (amber) — one line above confidence
+        if i < len(face_result.emotion_labels):
+            emotion_y = max(label_y - 20, 15)
+            cv2.putText(
+                display, face_result.emotion_labels[i],
+                (mx, emotion_y),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 2, cv2.LINE_AA,
+            )
+
     # Status bar — bottom of frame
+    face_count = len(face_result.bboxes)
+    dominant   = face_result.emotion_labels[0] if face_result.emotion_labels else "—"
     cv2.putText(
         display,
-        f"FPS: {fps:.1f}  |  Faces: {len(face_result.bboxes)}",
+        f"FPS: {fps:.1f}  |  Faces: {face_count}  |  Emotion: {dominant}",
         (10, h - 10),
         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2, cv2.LINE_AA,
     )

@@ -30,3 +30,20 @@ pyaudio==0.2.14
 # cross-platform playback alternative in future.
 # Note: playsound 1.3.0 requires PyObjC on macOS; use 1.2.2 for broader compat.
 playsound==1.2.2
+
+# ---- NPU intent expansion (main_npu.py — Snapdragon X Elite only) ----
+# These packages are OPTIONAL and only required when running main_npu.py.
+# DO NOT install on non-Snapdragon hardware — onnxruntime-qnn will fail.
+# Install order matters: install onnxruntime-qnn AFTER onnxruntime so the
+# QNN execution provider registers correctly.
+#
+#   pip install onnxruntime==1.21.0
+#   pip install onnxruntime-qnn==1.21.0
+#   pip install onnxruntime-genai==0.5.2
+#
+# The Gemma3-1B model directory (./models/gemma3-1b-qnn) must be downloaded
+# separately via Qualcomm AI Hub BEFORE the event — see NPU_SETUP.md.
+#
+# onnxruntime==1.21.0
+# onnxruntime-qnn==1.21.0
+# onnxruntime-genai==0.5.2

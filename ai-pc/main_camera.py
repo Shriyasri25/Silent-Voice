@@ -30,6 +30,7 @@ Performance optimizations applied
 
 import json
 import queue
+import subprocess
 import threading
 import time
 
@@ -176,7 +177,22 @@ def update_expression():
     """Receives expression label from mobile_vision.py."""
     global current_expression
     try:
-        current_expression = request.json.get("expression", "NEUTRAL")
+        new_expr = request.json.get("expression", "NEUTRAL")
+        if new_expr != current_expression:
+            current_expression = new_expr
+            # Write the expression into the Arduino UNO Q Bridge key so
+            # bridge_led_feedback.ino can read it and update LED brightness.
+            # Runs fire-and-forget; failure is non-fatal (LED just stays stale).
+            try:
+                subprocess.Popen(
+                    ["bridge-client", "put", "expression", current_expression],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except FileNotFoundError:
+                pass  # bridge-client not installed — no LED feedback, demo still works
+        else:
+            current_expression = new_expr
     except Exception as e:
         print(f"[ERROR] update_expression: {e}")
     return "OK"

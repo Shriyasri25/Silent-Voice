@@ -1,30 +1,30 @@
 """
 Silent Voice — mobile / camera device script
 
-Captures webcam frames, estimates a simple expression label using
-MediaPipe face landmarks (mouth-corner height as a happy/sad proxy,
-with a brightness-based fallback), and posts the label to the AI PC's
-/expression endpoint every frame.
+Captures webcam frames, runs FER+ emotion classification via
+face_detection.detect_faces() (which uses the Qualcomm AI Hub compiled
+model with QNN/NPU when available, or falls back to CPU), and posts the
+dominant emotion label to the AI PC's /expression endpoint on every change.
+
+The old FaceMesh-based heuristic (mouth-corner geometry + brightness fallback)
+has been replaced with the real FER+ ONNX inference pipeline so the expression
+label sent to the AI PC is consistent with what face_detection.py reports.
 
 Run:
-  pip install -r requirements.txt   (mediapipe, opencv-python, requests)
+  pip install -r requirements.txt   (mediapipe, opencv-python, requests, onnxruntime)
   python mobile_vision.py
 
 Set AI_PC_IP below to the AI PC's local network IP if running on a
 separate phone/laptop. If both scripts run on the same machine,
 leave it as localhost.
 
-Performance optimizations applied
-----------------------------------
-  - Removed time.sleep(0.05)       : was artificially capping to 20 FPS
+Performance notes
+-----------------
   - CAP_PROP_BUFFERSIZE = 1        : always grab the latest frame
-  - 640×480 resolution             : minimal decode cost
-  - MJPEG pixel format             : compressed stream from IP Webcam
-  - HTTP POST on a background thread: expression send never stalls capture loop
-  - rgb.flags.writeable = False    : avoids internal MediaPipe copy
-  - Single BGR→RGB conversion      : reused for FaceMesh inference
-  - FPS overlay on display frame
-  - FPS + per-stage timing printed every 3 seconds
+  - 640×480 + MJPEG               : minimal decode cost
+  - HTTP POST on a background thread: never stalls the capture loop
+  - FER+ session loaded once at startup and reused across all frames
+  - FPS + per-stage timing printed every FPS_REPORT_SEC seconds
 """
 
 import queue
@@ -32,8 +32,9 @@ import threading
 import time
 
 import cv2
-import mediapipe as mp
 import requests
+
+import face_detection as _fd   # detect_faces() → FaceDetectionResult
 
 # ---------------------------------------------------------------------------
 # Config
@@ -49,28 +50,7 @@ CAMERA_SOURCE = 0
 FPS_REPORT_SEC = 3.0   # how often to print the timing report
 
 # ---------------------------------------------------------------------------
-# MediaPipe FaceMesh — fastest reliable settings
-# ---------------------------------------------------------------------------
-mp_face_mesh = mp.solutions.face_mesh
-face_mesh = mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=False,          # skip iris landmarks — not needed here
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-)
-
-# Landmark indices for mouth corners and top/bottom lip
-LEFT_MOUTH  = 61
-RIGHT_MOUTH = 291
-TOP_LIP     = 13
-BOTTOM_LIP  = 14
-
-# ---------------------------------------------------------------------------
 # Background HTTP worker
-# ---------------------------------------------------------------------------
-# Expression changes are infrequent — a queue of size 1 is enough.
-# If the worker is still sending, drop the new value (stale expressions
-# arriving hundreds of ms late are worse than a small gap).
 # ---------------------------------------------------------------------------
 
 _http_queue: queue.Queue = queue.Queue(maxsize=1)
@@ -106,12 +86,10 @@ def _enqueue_expression(expression: str) -> None:
 def _open_capture(source) -> cv2.VideoCapture:
     """Open video source with latency-optimised settings."""
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-
     cap.set(cv2.CAP_PROP_FOURCC,       cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_BUFFERSIZE,   1)
-
     if not cap.isOpened():
         raise RuntimeError(
             f"Could not open camera source '{source}'. "
@@ -121,49 +99,42 @@ def _open_capture(source) -> cv2.VideoCapture:
 
 
 # ---------------------------------------------------------------------------
-# Expression estimation
+# Expression derivation
 # ---------------------------------------------------------------------------
 
-def _estimate_expression(rgb: "np.ndarray", frame_h: int, frame_w: int) -> str:
+def _dominant_emotion(face_result: "_fd.FaceDetectionResult") -> str:
     """
-    Estimate expression from a pre-converted RGB frame.
+    Return the expression label to send to the AI PC.
 
-    Accepts the already-converted RGB array so the caller performs only
-    one BGR→RGB conversion per frame instead of two.
+    Rules:
+      • One or more faces detected → use the FER+ label of the first face,
+        uppercased to match the existing protocol ("HAPPY", "NEUTRAL", etc.).
+      • No face detected → return "NEUTRAL" as a safe default.
+
+    FER+ outputs 8 classes; we map them to the 3-class vocabulary that
+    main.py / main_camera.py already understand:
+        happiness           → HAPPY
+        surprise            → SURPRISE   (new, harmless addition)
+        sadness / fear /
+        disgust / contempt  → SAD
+        neutral / anger     → NEUTRAL
     """
-    import numpy as np
-
-    results = face_mesh.process(rgb)
-
-    if not results.multi_face_landmarks:
-        # No face — brightness fallback
-        # Convert a small centre crop to gray rather than the full frame
-        cy, cx = frame_h // 2, frame_w // 2
-        patch = rgb[cy-40:cy+40, cx-40:cx+40]
-        brightness = patch.mean() if patch.size else 128
-        if brightness > 140:
-            return "HAPPY"
-        elif brightness < 80:
-            return "SAD"
+    if not face_result.emotion_labels:
         return "NEUTRAL"
 
-    lm = results.multi_face_landmarks[0].landmark
+    raw = face_result.emotion_labels[0]   # first detected face
 
-    left   = lm[LEFT_MOUTH]
-    right  = lm[RIGHT_MOUTH]
-    top    = lm[TOP_LIP]
-    bottom = lm[BOTTOM_LIP]
-
-    mouth_width  = abs(right.x - left.x) * frame_w
-    mouth_open   = abs(bottom.y - top.y) * frame_h
-    corner_avg_y = (left.y + right.y) / 2
-    mouth_center_y = (top.y + bottom.y) / 2
-
-    if corner_avg_y < mouth_center_y - 0.005:
-        return "HAPPY"
-    if mouth_open < 2 and mouth_width < frame_w * 0.05:
-        return "SAD"
-    return "NEUTRAL"
+    _MAP = {
+        "happiness": "HAPPY",
+        "surprise":  "SURPRISE",
+        "sadness":   "SAD",
+        "fear":      "SAD",
+        "disgust":   "SAD",
+        "contempt":  "NEUTRAL",
+        "anger":     "NEUTRAL",
+        "neutral":   "NEUTRAL",
+    }
+    return _MAP.get(raw, "NEUTRAL")
 
 
 # ---------------------------------------------------------------------------
@@ -178,17 +149,26 @@ def main() -> None:
     print(f"[Mobile Vision] Source     : {CAMERA_SOURCE}")
     print(f"[Mobile Vision] Resolution : {actual_w}×{actual_h}")
     print(f"[Mobile Vision] Sending to : {AI_PC_URL}")
-    print()
+
+    # Warm up the FER+ session so the first real frame isn't slow
+    print("[Mobile Vision] Loading FER+ model ...")
+    _fd._get_fer_session()
+    print("[Mobile Vision] Ready.\n")
 
     last_sent = ""
 
+    # Smoothed FPS for the display overlay — exponential moving average,
+    # same pattern used in face_detection.py and app.py
+    fps_smooth  = 0.0
+    fps_time    = time.time()
+
     # Timing accumulators
-    t_report      = time.perf_counter()
-    frame_count   = 0
-    acc_capture   = 0.0
-    acc_facemesh  = 0.0
-    acc_enqueue   = 0.0
-    acc_total     = 0.0
+    t_report     = time.perf_counter()
+    frame_count  = 0
+    acc_capture  = 0.0
+    acc_fer      = 0.0
+    acc_enqueue  = 0.0
+    acc_total    = 0.0
 
     while True:
         t_iter = time.perf_counter()
@@ -200,18 +180,13 @@ def main() -> None:
         if not ret:
             continue
 
-        h, w = frame.shape[:2]
-
-        # ---- 2. Single BGR→RGB conversion — reused for FaceMesh ----------
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb.flags.writeable = False   # avoids internal MediaPipe copy
-
-        # ---- 3. FaceMesh inference ---------------------------------------
+        # ---- 2. FER+ inference via face_detection module -----------------
         t0 = time.perf_counter()
-        expression = _estimate_expression(rgb, h, w)
-        acc_facemesh += (time.perf_counter() - t0) * 1000
+        face_result = _fd.detect_faces(frame)
+        acc_fer += (time.perf_counter() - t0) * 1000
 
-        rgb.flags.writeable = True
+        # ---- 3. Derive expression label ----------------------------------
+        expression = _dominant_emotion(face_result)
 
         # ---- 4. HTTP enqueue (non-blocking, only on change) --------------
         t0 = time.perf_counter()
@@ -223,6 +198,11 @@ def main() -> None:
         acc_total  += (time.perf_counter() - t_iter) * 1000
         frame_count += 1
 
+        # Smoothed FPS — update every frame, unaffected by accumulator resets
+        now_wall = time.time()
+        fps_smooth = 0.9 * fps_smooth + 0.1 / max(now_wall - fps_time, 1e-6)
+        fps_time   = now_wall
+
         # ---- 5. FPS / timing report --------------------------------------
         now_perf = time.perf_counter()
         elapsed  = now_perf - t_report
@@ -230,23 +210,27 @@ def main() -> None:
             n   = frame_count
             fps = n / elapsed
             print("=" * 44)
-            print(f"  Capture    ........... {acc_capture  / n:6.1f} ms")
-            print(f"  FaceMesh   ........... {acc_facemesh / n:6.1f} ms")
-            print(f"  HTTP enqueue ......... {acc_enqueue  / n:6.1f} ms")
-            print(f"  Total / frame ........ {acc_total    / n:6.1f} ms")
+            print(f"  Capture    ........... {acc_capture / n:6.1f} ms")
+            print(f"  FER+ infer ........... {acc_fer     / n:6.1f} ms")
+            print(f"  HTTP enqueue ......... {acc_enqueue / n:6.1f} ms")
+            print(f"  Total / frame ........ {acc_total   / n:6.1f} ms")
             print(f"  Capture FPS .......... {fps:6.1f}")
-            print(f"  Processing FPS ....... {1000.0 / max(acc_facemesh / n, 1e-6):6.1f}")
+            print(f"  Processing FPS ....... {1000.0 / max(acc_fer / n, 1e-6):6.1f}")
             print("=" * 44)
-
             t_report    = now_perf
             frame_count = 0
-            acc_capture = acc_facemesh = acc_enqueue = acc_total = 0.0
+            acc_capture = acc_fer = acc_enqueue = acc_total = 0.0
 
         # ---- 6. Display --------------------------------------------------
-        fps_display = frame_count / max(elapsed, 1e-6)
-        cv2.putText(frame, f"{expression}  {fps_display:.0f} FPS", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.imshow("Silent Voice — Mobile", frame)
+        # Use the annotated frame from detect_faces (already has boxes + labels)
+        display = face_result.annotated_frame.copy()
+        cv2.putText(
+            display,
+            f"{expression}  {fps_smooth:.0f} FPS",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2,
+        )
+        cv2.imshow("Silent Voice — Mobile Vision", display)
 
         if cv2.waitKey(1) & 0xFF == 27:   # Esc to quit
             break
@@ -257,3 +241,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
